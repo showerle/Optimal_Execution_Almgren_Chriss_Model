@@ -1,4 +1,4 @@
-###  Almgren-Chriss Model Implementing 
+###  Almgren-Chriss Model Implementation
 
 ## TODO
 1.	Almgren-Chriss Introduction
