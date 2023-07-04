@@ -219,15 +219,15 @@ class AlmgrenModel:
             self.totalCapture += info.share_to_sell_now * info.exec_price
 
             # Calculate the log return for the current step and save it in the logReturn deque
-            self.logReturns.append(np.log(info.price / self.prevPrice))
-            self.logReturns.popleft()
+            # self.logReturns.append(np.log(info.price / self.prevPrice))
+            # self.logReturns.popleft()
 
             # Update the number of shares remaining
             self.shares_remaining -= info.share_to_sell_now
 
             # Calculate the runnig total of the squares of shares sold and shares remaining
-            self.totalSSSQ += info.share_to_sell_now ** 2
-            self.totalSRSQ += self.shares_remaining ** 2
+            # self.totalSSSQ += info.share_to_sell_now ** 2
+            # self.totalSRSQ += self.shares_remaining ** 2
 
             # Update the variables required for the next step
             self.timeHorizon -= 1
