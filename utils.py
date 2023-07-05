@@ -295,3 +295,4 @@ def get_av_std(lq_time=60, nm_trades=60, tr_risk=1e-6, trs=100):
     plt.legend()
     plt.show()
 
+

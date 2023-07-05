@@ -12,11 +12,11 @@ DAILY_VOLAT = ANNUAL_VOLAT / np.sqrt(TRAD_DAYS)  # Daily volatility in stock pri
 
 # --------------------------- Parameters for the Almgren and Chriss Optimal Execution Model ------------------------- #
 
-TOTAL_SHARES = 1000000  # Total number of shares to sell
+TOTAL_SHARES = 1000  # Total number of shares to sell
 STARTING_PRICE = 50  # Starting price per share
 LLAMBDA = 1e-6  # Trader's risk aversion
-LIQUIDATION_TIME = 60  # How many days to sell all the shares.
-NUM_N = 60  # Number of trades
+LIQUIDATION_TIME = 24  # How many hours to sell all the shares.
+NUM_N = 24  # Number of trades
 EPSILON = BID_ASK_SP / 2  # Fixed Cost of Selling.
 SINGLE_STEP_VARIANCE = (DAILY_VOLAT * STARTING_PRICE) ** 2  # Calculate single step variance
 ETA = BID_ASK_SP / (0.01 * DAILY_TRADE_VOL)  # Price Impact for Each 1% of Daily Volume Traded
@@ -260,3 +260,7 @@ class AlmgrenModel:
     def stop_transactions(self):
         # Stop transacting
         self.transacting = False
+
+
+def main():
+    from utils import plot_trade_list, get_av_std
