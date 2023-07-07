@@ -6,28 +6,22 @@ import pandas as pd
 from matplotlib import pyplot as plt
 from tqdm import tqdm
 import matplotlib.ticker as mticker
-
-TOTAL_SHARES = 1000  # Total number of shares to sell
-LIQUIDATION_TIME = 24  # How many hours to sell all the shares.
-NUM_N = 24  # Number of trades
-TOLERANCE = 0.01  # Minimum number of stocks one can sell(in BTCUSDT is 0.01 USDT)
-DIRECTION = 'buy'
+from constants import *
 
 
 class VWAMP:
     def __init__(self, data: pd.DataFrame,
                  lqd_time=LIQUIDATION_TIME,
                  num_tr=NUM_N,
-                 all_share=TOTAL_SHARES,
                  tolerance=TOLERANCE,
                  direction=DIRECTION):
-        self.direction = direction
-        self.data = self.prepare_data(data)
 
+        self.data = data
         self.liquidation_time = lqd_time
         self.num_n = num_tr
-        self.total_shares = all_share
-        self.startingPrice = self.data['price'].iloc[0, ]
+        self.total_shares = TOTAL_SHARES
+        self.startingPrice = STARTING_PRICE
+        self.init_value = self.total_shares * self.startingPrice
 
         self.transacting = False
         self.shares_remaining = 0
@@ -36,63 +30,73 @@ class VWAMP:
 
         self.shares_remaining = self.total_shares
         self.timeHorizon = self.num_n
+        self.direction = direction
+        self.prepare_data(self.data)
 
     def prepare_data(self, data):
         data = data[data['side'] == self.direction]
         data = data.set_index('timestamp')
         data.index = pd.to_datetime(data.index, unit='us')
-        return data
+        self.daily_volume = data['amount'].sum()
 
-    def start_transactions(self):
-        # Set transactions on
+        # Group by transaction speed
+        self.grouped_data = data.groupby(pd.Grouper(freq=f'{self.tau}H'))
+        self.grouped_keys = [pd.Timestamp(group) for group, _ in self.grouped_data]
+
+    def start_transactions(self, plot=True):
         self.transacting = True
-        self.init_value = self.total_shares * self.startingPrice
-        print(f'{self.__class__.__name__} algo transactions begins, initial total value {self.init_value}')
+        # print(f'{self.__class__.__name__} algo transactions begins, initial total value {self.init_value}')
 
-        self.trade_list, self.IS_list = self.step()
-        print(f'{self.__class__.__name__} algo transactions end in {np.count_nonzero(self.trade_list != 0):} hour, '
-              f'final total Capture {self.IS_list.sum() - self.init_value:.2f}')
-        self.plot_trajectory()
-        self.plot_is()
+        self.step()
+        # print(f'{self.__class__.__name__} algo transactions end in {np.count_nonzero(self.trade_list != 0):} hour, '
+        #       f'final total Capture {self.IS_list.sum() - self.init_value:.2f}')
+
+        if plot:
+            self.plot_trajectory()
+            self.plot_is()
 
     def stop_transactions(self):
-        # Stop transacting
         self.transacting = False
 
-    def step(self):
-        trade_list = np.zeros(self.num_n)
-        IS_list = np.zeros(self.num_n)
+    def get_hourly_trade_data(self, time: int):
+        if len(self.grouped_keys) > self.num_n:
+            return self.grouped_data.get_group(self.grouped_keys[time + 1])
+        else:
+            return self.grouped_data.get_group(self.grouped_keys[time])
 
-        # 按照交易速度进行分组
-        grouped_data = self.data.groupby(pd.Grouper(freq=f'{self.tau}H'))
-        grouped_keys = [pd.Timestamp(group) for group, _ in grouped_data]
+    def step(self):
+        self.trade_list = np.zeros(self.num_n)
+        self.IS_list = np.zeros(self.num_n)
 
         while self.transacting:
-            for i in tqdm(range(0, self.num_n)):
+            for i in range(0, self.num_n):
                 if self.timeHorizon == 0 or self.shares_remaining < self.tolerance:
                     # print('in here')
                     self.stop_transactions()
                     break
 
-                trade_data = grouped_data.get_group(grouped_keys[i])
-                volumeToSell = trade_data['amount'].sum() / self.data['amount'].sum() * self.total_shares
-                traded_horizon = 0
+                trade_data = self.get_hourly_trade_data(i)
+                volumeToSell = min(trade_data['amount'].sum() / self.daily_volume * self.total_shares,
+                                   self.shares_remaining)
+                volumeSold, singleSold, turnoverSold,  traded_horizon = 0, 0, 0, 0
 
-                # 采用市价单成交
-                while volumeToSell > self.tolerance and traded_horizon < trade_data.shape[0]:
-                    volumeToSell -= trade_data.iloc[traded_horizon, ]['amount']
+                # Use market order to trade
+                while volumeSold < volumeToSell and traded_horizon < trade_data.shape[0]:
+                    if (volumeToSell - volumeSold) < trade_data.iloc[traded_horizon, ]['amount']:
+                        singleSold = volumeToSell - volumeSold
+                    elif (volumeToSell - volumeSold) < self.tolerance:
+                        break
+                    else:
+                        singleSold = trade_data.iloc[traded_horizon, ]['amount']
+
+                    volumeSold += singleSold
+                    turnoverSold += singleSold * trade_data.iloc[traded_horizon, ]['price']
                     traded_horizon += 1
 
-                # 计算出每个交易区间的VWAP
-                volumeSelled = trade_data.iloc[:traded_horizon, ]['amount'].sum()
-                trade_list[i] = volumeSelled
-
-                IS_list[i] = (trade_data.iloc[:traded_horizon, ]['amount'] * trade_data.iloc[:traded_horizon, ][
-                    'price']).sum()
-                self.shares_remaining -= volumeSelled
+                self.trade_list[i] = volumeSold
+                self.IS_list[i] = turnoverSold
+                self.shares_remaining -= volumeSold
                 self.timeHorizon -= 1
-
-        return trade_list, IS_list
 
     def plot_trajectory(self):
         new_trl = np.insert(self.trade_list, 0, 0)
@@ -149,51 +153,36 @@ class VWAMP:
 
 class TWAP(VWAMP):
     def step(self):
-        trade_list = np.zeros(self.num_n)
-        IS_list = np.zeros(self.num_n)
-
-        # 按照交易速度进行分组
-        grouped_data = self.data.groupby(pd.Grouper(freq=f'{self.tau}H'))
-        grouped_keys = [pd.Timestamp(group) for group, _ in grouped_data]
+        self.trade_list = np.zeros(self.num_n)
+        self.IS_list = np.zeros(self.num_n)
 
         while self.transacting:
-            for i in tqdm(range(0, self.num_n)):
+            for i in range(0, self.num_n):
                 if self.timeHorizon == 0 or self.shares_remaining < self.tolerance:
                     # print('in here')
                     self.stop_transactions()
                     break
 
-                trade_data = grouped_data.get_group(grouped_keys[i])
+                trade_data = self.get_hourly_trade_data(i)
                 # 按照时间交易
-                volumeToSell = self.total_shares / self.num_n
-                traded_horizon = 0
+                volumeToSell = min(self.total_shares / self.num_n, self.shares_remaining)
+                volumeSold, singleSold, turnoverSold, traded_horizon = 0, 0, 0, 0
 
                 # 采用市价单成交
-                while volumeToSell > self.tolerance and traded_horizon < trade_data.shape[0]:
-                    volumeToSell -= trade_data.iloc[traded_horizon, ]['amount']
+                while volumeSold < volumeToSell and traded_horizon < trade_data.shape[0]:
+                    if (volumeToSell - volumeSold) < trade_data.iloc[traded_horizon, ]['amount']:
+                        singleSold = volumeToSell - volumeSold
+                    elif (volumeToSell - volumeSold) < self.tolerance:
+                        break
+                    else:
+                        singleSold = trade_data.iloc[traded_horizon, ]['amount']
+                    volumeSold += singleSold
+                    turnoverSold += singleSold * trade_data.iloc[traded_horizon, ]['price']
                     traded_horizon += 1
 
-                volumeSelled = trade_data.iloc[:traded_horizon, ]['amount'].sum()
-                trade_list[i] = volumeSelled
-                # self.totalCapture += (trade_data.iloc[:traded_horizon, ]['amount'] * trade_data.iloc[:traded_horizon, ][
-                #     'price']).sum()
-                IS_list[i] = IS_list[i] = (trade_data.iloc[:traded_horizon, ]['amount'] * trade_data.iloc[:traded_horizon, ][
-                    'price']).sum()
-                self.shares_remaining -= volumeSelled
+                self.trade_list[i] = volumeSold
+                self.IS_list[i] = turnoverSold
+                self.shares_remaining -= volumeSold
                 self.timeHorizon -= 1
 
-        return trade_list, IS_list
 
-
-
-
-def main():
-    data = pd.read_csv(fr"C:\Users\dell\data\trade\binance-futures_trades_2023-05-01_BTCUSDT.csv\binance-futures_trades_2023-05-01_BTCUSDT.csv")
-    vwap = VWAMP(data)
-    vwap.start_transactions()
-
-    twap = TWAP(data)
-    twap.start_transactions()
-
-
-main()
